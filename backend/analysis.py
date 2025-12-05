@@ -1,11 +1,14 @@
 import pandas as pd
 import numpy as np
 
-def calculate_did(df):
+def calculate_did(df, treatment_group='Treatment', control_group='Control'):
     """
     Calculates Difference-in-Differences (DiD) Estimator.
-    Effect = (Treatment_Post - Treatment_Pre) - (Control_Post - Control_Pre)
+    Flexible: Can accept custom group names for Placebo testing.
     """
+    # Filter only relevant groups
+    df = df[df['group'].isin([treatment_group, control_group])].copy()
+    
     # Group by Period and Group
     summary = df.groupby(['group', 'period'])['supply_hours'].mean().reset_index()
     
@@ -14,10 +17,10 @@ def calculate_did(df):
         val = summary[(summary['group'] == grp) & (summary['period'] == per)]['supply_hours'].values
         return float(val[0]) if len(val) > 0 else 0.0
 
-    t_post = get_val('Treatment', 'Post-Intervention')
-    t_pre = get_val('Treatment', 'Pre-Intervention')
-    c_post = get_val('Control', 'Post-Intervention')
-    c_pre = get_val('Control', 'Pre-Intervention')
+    t_post = get_val(treatment_group, 'Post-Intervention')
+    t_pre = get_val(treatment_group, 'Pre-Intervention')
+    c_post = get_val(control_group, 'Post-Intervention')
+    c_pre = get_val(control_group, 'Pre-Intervention')
     
     # DiD Calculation
     treatment_diff = t_post - t_pre
@@ -27,7 +30,6 @@ def calculate_did(df):
     # Simple Lift % relative to pre-treatment baseline
     lift_percent = did_estimator / t_pre if t_pre != 0 else 0.0
     
-    # Return dictionary with explicit float casts
     results = {
         "did_absolute_impact": float(did_estimator),
         "lift_percent": float(lift_percent),
