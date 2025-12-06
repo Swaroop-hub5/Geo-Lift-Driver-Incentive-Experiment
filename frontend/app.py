@@ -22,13 +22,13 @@ try:
 except ImportError:
     try:
         # Fallback: Try importing assuming flat structure (all files in same folder)
-        from simulation import GeoSimulator
-        from analysis import calculate_did
+        from backend.simulation import GeoSimulator
+        from backend.analysis import calculate_did
     except ImportError as e:
         st.error(f"⚠️ Import Error: {e}")
         st.stop()
 
-st.set_page_config(page_title="Bolt: Geo-Lift Experiment", layout="wide")
+st.set_page_config(page_title="Geo-Lift Experiment", layout="wide")
 
 # --- HEADER ---
 st.title("🚗 Driver Incentives: Geo-Lift Experiment")
@@ -73,20 +73,54 @@ if st.sidebar.button("Run Simulation", type="primary"):
             fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=300)
             st.plotly_chart(fig_map, width='stretch')
 
-            st.divider() # Separation line
+            st.divider()
 
             st.subheader("Experiment Results: Tallinn/Vilnius (Bonus) vs. Riga/Tartu (No Bonus)")
             
             # Calculate Real DiD
             main_res = calculate_did(full_df, treatment_group='Treatment', control_group='Control')
             
-            # Metrics Row
-            c1, c2, c3 = st.columns(3)
-            c1.metric("DiD Estimator (Impact)", f"+{main_res['did_absolute_impact']:.1f} Hrs", 
+            # --- UPDATE START: ADVANCED METRICS ---
+            # Row 1: The Business Numbers
+            m1, m2, m3 = st.columns(3)
+            m1.metric("DiD Estimator (Impact)", f"+{main_res['did_absolute_impact']:.1f} Hrs", 
                       help="Net increase in supply hours attributable to the bonus.")
-            c2.metric("Relative Lift", f"{main_res['lift_percent']:.2%}", 
+            m2.metric("Relative Lift", f"{main_res['lift_percent']:.2%}", 
                       delta_color="normal" if main_res['lift_percent'] > 0 else "inverse")
-            c3.success("Parallel Trends: VISIBLE")
+            
+            # Row 2: The Statistical Rigor (New!)
+            if 'p_value' in main_res:
+                p_val = main_res['p_value']
+                is_sig = main_res['is_significant']
+                
+                # Dynamic P-Value Display
+                m3.metric("P-Value", f"{p_val:.4f}", 
+                          delta="Significant (p < 0.05)" if is_sig else "Not Significant",
+                          delta_color="normal" if is_sig else "inverse") # Invert logic: Red if NOT significant
+                
+                # Confidence Interval Display
+                st.caption(f"**95% Confidence Interval:** [{main_res['conf_int_lower']:.1f}, {main_res['conf_int_upper']:.1f}]")
+                
+                # Explain what this means
+                if is_sig:
+                    st.success("✅ Result is Statistically Significant. We can trust this lift.")
+                else:
+                    st.warning("⚠️ Result is NOT Statistically Significant. The lift might be random noise.")
+                
+                # Full Regression Report (For the 'Data Scientist' persona)
+                with st.expander("See OLS Regression Details"):
+                    st.code(main_res.get('model_summary', 'No summary available'))
+            else:
+                m3.info("Parallel Trends: VISIBLE")
+            # --- UPDATE END ---
+            
+            # Metrics Row
+            # c1, c2, c3 = st.columns(3)
+            # c1.metric("DiD Estimator (Impact)", f"+{main_res['did_absolute_impact']:.1f} Hrs", 
+                    #  help="Net increase in supply hours attributable to the bonus.")
+            # c2.metric("Relative Lift", f"{main_res['lift_percent']:.2%}", 
+                    #  delta_color="normal" if main_res['lift_percent'] > 0 else "inverse")
+            # c3.success("Parallel Trends: VISIBLE")
 
             # Chart
             chart_df = full_df.groupby(['date', 'group'])['supply_hours'].mean().reset_index()
@@ -129,16 +163,42 @@ if st.sidebar.button("Run Simulation", type="primary"):
             pc1.metric("Placebo Impact", f"{placebo_res['did_absolute_impact']:.1f} Hrs", 
                        help="Ideally this should be close to 0.")
             
-            # Dynamic Color Logic: Green if low noise, Red if high noise (False Positive)
-            is_noise_low = abs(placebo_res['lift_percent']) < 0.05
-            pc2.metric("Placebo Lift %", f"{placebo_res['lift_percent']:.2%}", 
-                       delta="Pass" if is_noise_low else "Fail - High Noise",
-                       delta_color="normal" if is_noise_low else "inverse")
             
-            if is_noise_low:
-                pc3.success("✅ Robustness Check PASSED")
+            # --- UPDATE START: PLACEBO LOGIC ---
+            # 1. Check Magnitude (Should be small)
+            is_magnitude_small = abs(placebo_res['lift_percent']) < 0.05
+            
+            # 2. Check Significance (Should be NOT Significant, i.e., P-Value > 0.05)
+            # If P-Value is LOW (e.g. 0.01), it means we found a significant difference between two identical cities. That's bad!
+            is_not_significant = True 
+            if 'p_value' in placebo_res:
+                is_not_significant = placebo_res['p_value'] > 0.05
+
+            # Combined Pass/Fail Logic
+            placebo_passed = is_magnitude_small and is_not_significant
+            
+            pc2.metric("Placebo Lift %", f"{placebo_res['lift_percent']:.2%}", 
+                       delta="Pass" if placebo_passed else "Fail",
+                       delta_color="normal" if placebo_passed else "inverse")
+            
+            if placebo_passed:
+                pc3.success("✅ Robustness Check PASSED (Noise is random)")
             else:
-                pc3.error("⚠️ Robustness Check FAILED (High Volatility)")
+                pc3.error("⚠️ Robustness Check FAILED (Found significant fake lift)")
+                if not is_not_significant:
+                    st.caption("Failure Reason: The model found a 'Statistically Significant' difference between two control cities.")
+            # --- UPDATE END ---
+            
+            # Dynamic Color Logic: Green if low noise, Red if high noise (False Positive)
+            # is_noise_low = abs(placebo_res['lift_percent']) < 0.05
+            # pc2.metric("Placebo Lift %", f"{placebo_res['lift_percent']:.2%}", 
+              #         delta="Pass" if is_noise_low else "Fail - High Noise",
+              #         delta_color="normal" if is_noise_low else "inverse")
+            
+            # if is_noise_low:
+              #  pc3.success("✅ Robustness Check PASSED")
+            # else:
+              #  pc3.error("⚠️ Robustness Check FAILED (High Volatility)")
 
             # Chart
             p_chart_df = placebo_df.groupby(['date', 'group'])['supply_hours'].mean().reset_index()

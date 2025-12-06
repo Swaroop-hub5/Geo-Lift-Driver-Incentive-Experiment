@@ -11,51 +11,59 @@ class GeoSimulator:
             'Riga':    {'type': 'Control',   'lat': 56.9496, 'lon': 24.1052, 'base_supply': 480},
             'Tartu':   {'type': 'Control',   'lat': 58.3780, 'lon': 26.7290, 'base_supply': 490}
         }
-        self.start_date = datetime.now() - timedelta(days=60) # 60 days of data
+        self.start_date = datetime.now() - timedelta(days=60)
 
     def generate_city_data(self, uplift_percent=0.15, random_seed=42):
         """
-        Generates daily 'Supply Hours' for each city.
-        uplift_percent: The effect of the bonus (e.g., 0.15 for 15% increase).
+        Generates daily 'Supply Hours' with Day-of-Week seasonality.
         """
-        np.random.seed(random_seed) # CRITICAL: Ensures the 'noise' is consistent for the demo
+        np.random.seed(random_seed) 
         
         data = []
         dates = pd.date_range(start=self.start_date, periods=60, freq='D')
         
-        # Experiment starts on Day 40 (last 20 days are the test)
-        experiment_start_date = dates[40]
+        # Dynamic Cutoff: Experiment starts at the 66% mark (approx Day 40)
+        cutoff_index = int(len(dates) * 0.66)
+        experiment_start_date = dates[cutoff_index]
 
         for city_name, props in self.cities.items():
             base = props['base_supply']
             is_treatment = props['type'] == 'Treatment'
             
-            # Common Trend (Seasonality affecting ALL cities equally)
-            # E.g., Weekends are busier (Sine wave simulation)
-            seasonality = np.sin(np.linspace(0, 8*np.pi, 60)) * 20 
-
             for date in dates:
-                # Random daily noise unique to each city
-                # We add some volatility to make the Placebo test meaningful
+                # --- IMPROVEMENT: REALISTIC SEASONALITY ---
+                # Logic: Ride-hailing is busiest on Fri/Sat nights.
+                day_of_week = date.weekday() # 0=Monday, 6=Sunday
+                
+                if day_of_week in [4, 5]: # Friday & Saturday
+                    dow_factor = 1.30 # 30% Supply Surge needed/available
+                elif day_of_week == 6:    # Sunday
+                    dow_factor = 1.10 # 10% higher than weekday
+                else:                     # Mon-Thu
+                    dow_factor = 1.00 # Baseline
+                
+                # Add random daily noise (Volatility)
                 noise = np.random.normal(0, 15)
                 
-                # Calculate metric: Driver Online Hours
-                value = base + seasonality[dates.get_loc(date)] + noise
+                # Calculate Base Value: Base * Seasonality + Noise
+                value = (base * dow_factor) + noise
+                # ------------------------------------------
                 
-                # Apply TREATMENT EFFECT only after start date and only for Treatment cities
+                # Apply TREATMENT EFFECT (The Driver Bonus)
                 is_post_period = date >= experiment_start_date
+                
                 if is_treatment and is_post_period:
                     # The Bonus increases supply by uplift_percent
                     value *= (1 + uplift_percent)
                 
-                # Explicit Type Casting for JSON Serialization Safety
+                # Explicit Type Casting
                 data.append({
                     'date': date,
                     'city': str(city_name),
                     'group': str(props['type']),
                     'lat': float(props['lat']),
                     'lon': float(props['lon']),
-                    'supply_hours': int(value), # Convert numpy int to python int
+                    'supply_hours': int(value),
                     'period': 'Post-Intervention' if is_post_period else 'Pre-Intervention'
                 })
                 
